@@ -1,10 +1,14 @@
 "use client";
 import { api, getToken } from "./api";
 
+// Same-origin WS by default — FastAPI exposes /ws/* on the same port
+// the static frontend was served from. The protocol auto-switches to
+// wss:// on HTTPS. Override at build time (NEXT_PUBLIC_WS_BASE) for
+// split-deploy setups where the API lives on a different host.
 const WS_BASE =
   process.env.NEXT_PUBLIC_WS_BASE ||
   (typeof window !== "undefined"
-    ? `ws://${window.location.hostname}:8000`
+    ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`
     : "ws://localhost:8000");
 
 export type ArenaConnection = {

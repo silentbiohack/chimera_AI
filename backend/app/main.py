@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import agents, arena, auth, policies, reports, threats, ws
 from app.config import settings
@@ -47,27 +50,28 @@ async def access_log(request: Request, call_next):
     return response
 
 
+# ---------------------------------------------------------------------------
+# Meta routes (kept at root so liveness probes don't need /api prefix)
+# ---------------------------------------------------------------------------
+
 @app.get("/healthz", tags=["meta"])
 def healthz() -> dict:
     return {"status": "ok", "env": settings.environment, "llm_mode": settings.llm_mode}
 
 
-@app.get("/", tags=["meta"])
-def root() -> dict:
-    return {
-        "name": "CHIMERA",
-        "tagline": "the autonomous immune system for enterprise AI agents",
-        "docs": "/docs",
-    }
+# ---------------------------------------------------------------------------
+# API routers — mounted under /api so they don't collide with frontend
+# routes (/arena, /threats, /reports are SPA pages too).
+# ---------------------------------------------------------------------------
 
-
-# Routers
-app.include_router(auth.router)
-app.include_router(agents.router)
-app.include_router(arena.router)
-app.include_router(threats.router)
-app.include_router(policies.router)
-app.include_router(reports.router)
+app.include_router(auth.router,     prefix="/api")
+app.include_router(agents.router,   prefix="/api")
+app.include_router(arena.router,    prefix="/api")
+app.include_router(threats.router,  prefix="/api")
+app.include_router(policies.router, prefix="/api")
+app.include_router(reports.router,  prefix="/api")
+# WebSocket stays at /ws/* (no /api prefix) — the frontend builds its WS
+# URL relative to window.location.host and doesn't want an extra hop.
 app.include_router(ws.router)
 
 
@@ -79,3 +83,65 @@ async def unhandled(_: Request, exc: Exception):  # pragma: no cover
         raise exc
     log.exception("unhandled")
     return JSONResponse(status_code=500, content={"detail": "internal error"})
+
+
+# ---------------------------------------------------------------------------
+# Frontend SPA — optional, only mounted when a build is present at the path
+# pointed to by FRONTEND_DIST (default /app/frontend_dist).
+#
+# Layout produced by `next build` with `output: 'export'`:
+#     out/
+#       index.html
+#       arena/index.html
+#       genome/index.html
+#       ...
+#       _next/static/...
+#
+# Routing strategy:
+#   /_next/*       → static asset (StaticFiles)
+#   /<route>/      → corresponding index.html
+#   anything else  → out/index.html (SPA fallback handled by client router)
+# ---------------------------------------------------------------------------
+
+_FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/app/frontend_dist"))
+
+if _FRONTEND_DIST.is_dir() and (_FRONTEND_DIST / "index.html").is_file():
+    _next_assets = _FRONTEND_DIST / "_next"
+    if _next_assets.is_dir():
+        app.mount("/_next", StaticFiles(directory=_next_assets), name="next-assets")
+
+    # Root: serve marketing landing page.
+    @app.get("/", include_in_schema=False)
+    def _spa_root() -> FileResponse:
+        return FileResponse(_FRONTEND_DIST / "index.html")
+
+    # Per-route exact handler — Next.js export emits one folder per page.
+    @app.get("/{page_path:path}", include_in_schema=False)
+    def _spa_route(page_path: str) -> FileResponse:
+        # Block paths that look like API/meta to keep error messages clean.
+        if page_path.startswith(("api/", "ws/", "docs", "openapi.json", "healthz")):
+            raise HTTPException(status_code=404)
+
+        # Try exact static file (favicon.ico, robots.txt, og images, etc.).
+        exact = _FRONTEND_DIST / page_path
+        if exact.is_file():
+            return FileResponse(exact)
+
+        # Try the Next.js export layout: `<route>/index.html`.
+        page_html = _FRONTEND_DIST / page_path.rstrip("/") / "index.html"
+        if page_html.is_file():
+            return FileResponse(page_html)
+
+        # SPA fallback — let the client router resolve unknown paths and
+        # render the 404 component itself.
+        return FileResponse(_FRONTEND_DIST / "index.html")
+else:
+    # Backend-only mode (no frontend baked in) — keep the marketing JSON
+    # at / so the old behaviour is preserved when running the API alone.
+    @app.get("/", tags=["meta"])
+    def _api_only_root() -> dict:
+        return {
+            "name": "CHIMERA",
+            "tagline": "the autonomous immune system for enterprise AI agents",
+            "docs": "/docs",
+        }

@@ -1,9 +1,15 @@
 "use client";
 
+// Same-origin by default — FastAPI mounts API under /api and SPA static
+// under /. Override only for split-deploy setups (Vercel frontend +
+// Railway backend) by exporting NEXT_PUBLIC_API_BASE at build time.
+//
+// Empty-string base means fetch will resolve relative to window.origin,
+// which is exactly what we want for the single-container deploy.
+const ENV_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 const BASE =
   (typeof window !== "undefined" && (window as any).__CHIMERA_API__) ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "http://localhost:8000";
+  (ENV_BASE ? `${ENV_BASE.replace(/\/$/, "")}/api` : "/api");
 
 const TOKEN_KEY = "chimera.token";
 

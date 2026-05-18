@@ -1,58 +1,70 @@
-# Root Dockerfile for Railway / Render / Fly.io deployment of the
-# CHIMERA backend (FastAPI + worker entry-points share one image).
+# =============================================================================
+# CHIMERA single-container build — FastAPI backend + Next.js static export.
 #
-# Railway auto-detects this file because it sits at the repo root. The
-# frontend and worker run as separate Railway services pointing at the
-# same image with different start commands.
+# Stage 1 builds the Next.js frontend (`output: "export"` in next.config.js)
+# into a tree of plain HTML/CSS/JS under /app/out.
 #
-# Required env vars in Railway:
-#   DATABASE_URL    — provided automatically by the Postgres add-on
-#   REDIS_URL       — provided automatically by the Redis add-on
-#   JWT_SECRET      — generate 32+ random bytes; set in service vars
-#   ENVIRONMENT     — "production"  (enforces strict validators)
-#   PORT            — injected by Railway; uvicorn binds to it
+# Stage 2 is the Python runtime that copies the export, installs backend
+# dependencies, runs migrations on boot, and serves both /api/* + /ws/* +
+# the static frontend on a single $PORT.
 #
-# Optional:
-#   GEMINI_API_KEY  — enables live Gemini routing; otherwise synthetic
-#   CORS_ORIGINS    — comma-separated list of allowed frontend origins
-#   BUS_MODE        — auto | redis | local  (defaults to auto)
+# Result: one Railway service, one URL, no CORS, no separate Vercel deploy,
+# no worker container required (arena.py uses BackgroundTasks by default).
+# =============================================================================
 
+# -----------------------------------------------------------------------------
+# Stage 1 — build the static frontend
+# -----------------------------------------------------------------------------
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app
+
+# Install deps separately so a code-only change doesn't bust the npm cache.
+COPY frontend/package.json frontend/package-lock.json* ./
+# Use `npm install` (not `ci`) so we don't require a committed lockfile.
+RUN npm install --no-audit --no-fund
+
+# Copy the rest of the frontend and emit the static export under /app/out.
+COPY frontend/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2 — Python runtime
+# -----------------------------------------------------------------------------
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    FRONTEND_DIST=/app/frontend_dist
 
 WORKDIR /app
 
-# Build deps for psycopg2 / bcrypt + curl for the healthcheck probe.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Layer requirements separately so dep-only changes don't bust the
-# whole image cache.
+# Backend dependencies.
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install -U pip && pip install -r requirements.txt
 
-# Copy the backend source. alembic.ini sits at the backend root, so its
-# `script_location = alembic` resolves to /app/alembic — same layout as
-# the dev container.
+# Backend source.
 COPY backend /app
 
-# Drop privileges. UID 1000 matches the typical host user.
+# Static frontend produced by stage 1.
+COPY --from=frontend-builder /app/out /app/frontend_dist
+
+# Drop privileges (UID 1000 matches typical host user for dev bind-mounts).
 RUN groupadd --system --gid 1000 chimera \
     && useradd --system --uid 1000 --gid chimera --home-dir /app --shell /usr/sbin/nologin chimera \
     && chown -R chimera:chimera /app
 USER chimera
 
-# Railway sets PORT at runtime; default to 8000 for local docker runs.
 ENV PORT=8000
 EXPOSE 8000
 
 HEALTHCHECK --interval=15s --timeout=4s --start-period=30s --retries=5 \
     CMD curl -fsS "http://localhost:${PORT}/healthz" || exit 1
 
-# Apply pending migrations on boot, then start uvicorn bound to $PORT.
-# `sh -c` is needed for env-var expansion in the CMD form.
+# Apply pending migrations on boot, then serve the combined app on $PORT.
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
