@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # populate_by_name lets Pydantic match either the field name or its
+    # alias when reading env vars — important for DATABASE_URL which is
+    # the de-facto Railway/Heroku/Render convention.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     environment: str = "development"
     log_level: str = "INFO"
@@ -22,6 +25,10 @@ class Settings(BaseSettings):
     postgres_db: str = "chimera"
     postgres_host: str = "postgres"
     postgres_port: int = 5432
+    # Managed platforms (Railway, Render, Fly.io, Heroku, Supabase) inject
+    # a single DATABASE_URL instead of POSTGRES_*. When present, it wins
+    # over the discrete vars — see `database_url` property below.
+    database_url_override: str = Field(default="", validation_alias="DATABASE_URL")
 
     redis_url: str = "redis://redis:6379/0"
     bus_mode: str = "auto"   # auto | redis | local
@@ -48,6 +55,16 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        # Honour platform-injected DATABASE_URL when present. Railway and
+        # Heroku still ship `postgres://` (no driver), so coerce it to the
+        # psycopg2 dialect SQLAlchemy actually loads.
+        if self.database_url_override:
+            url = self.database_url_override
+            if url.startswith("postgres://"):
+                url = "postgresql+psycopg2://" + url[len("postgres://"):]
+            elif url.startswith("postgresql://") and "+" not in url.split("://", 1)[0]:
+                url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+            return url
         return (
             f"postgresql+psycopg2://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
