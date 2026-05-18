@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from sqlalchemy import Integer, cast, func
@@ -46,14 +47,30 @@ def start_session(
 
 
 def _dispatch(session_id: uuid.UUID, background: BackgroundTasks) -> None:
-    """Prefer the Redis-backed worker; if it's unreachable, fall back to an
-    in-process BackgroundTask so the demo still completes."""
-    try:
-        from app.workers import queue as q
-        q.enqueue("arena.run_session", {"session_id": str(session_id)})
-        return
-    except Exception:
-        log.warning("redis enqueue failed — running session in-process")
+    """Run the orchestrator in-process by default; switch to the Redis
+    worker queue only when an external worker fleet is deployed.
+
+    Default (Railway single-service / docker-compose single-host / Vercel
+    preview / local dev) — in-process BackgroundTask. No worker container
+    required; FastAPI streams telemetry as it produces it.
+
+    Opt-in (large fleet, isolation needed) — set USE_WORKER_QUEUE=true
+    and run `python -m app.workers.runner` somewhere reachable on the
+    same Redis. The web tier then enqueues instead of executing inline.
+    """
+    use_queue = os.getenv("USE_WORKER_QUEUE", "").lower() in ("1", "true", "yes")
+
+    if use_queue:
+        try:
+            from app.workers import queue as q
+            q.enqueue("arena.run_session", {"session_id": str(session_id)})
+            log.info("session=%s queued for external worker", session_id)
+            return
+        except Exception:
+            log.warning(
+                "USE_WORKER_QUEUE=true but enqueue failed — falling back "
+                "in-process. Check Redis connectivity and worker health."
+            )
 
     async def _inproc() -> None:
         from app.agents.orchestrator import run_session
