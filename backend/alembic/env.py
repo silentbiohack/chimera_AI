@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from app.config import settings
 from app.db import Base
 from app import models  # noqa: F401  (register all models)
 
@@ -14,15 +14,12 @@ config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
 
-user = os.getenv("POSTGRES_USER", "chimera")
-pw = os.getenv("POSTGRES_PASSWORD", "chimera")
-host = os.getenv("POSTGRES_HOST", "postgres")
-port = os.getenv("POSTGRES_PORT", "5432")
-db = os.getenv("POSTGRES_DB", "chimera")
-config.set_main_option(
-    "sqlalchemy.url",
-    f"postgresql+psycopg2://{user}:{pw}@{host}:{port}/{db}",
-)
+# Single source of truth: app.config.settings.database_url already honours
+# managed-platform DATABASE_URL (Railway / Heroku / Render) and falls back
+# to the discrete POSTGRES_* vars for local docker-compose. Building the
+# URL here from env vars directly (the old code) bypassed that and tried
+# to resolve the docker-compose hostname `postgres` on Railway.
+config.set_main_option("sqlalchemy.url", settings.database_url)
 
 target_metadata = Base.metadata
 
