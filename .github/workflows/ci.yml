@@ -1,0 +1,68 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: chimera
+          POSTGRES_PASSWORD: chimera
+          POSTGRES_DB: chimera_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U chimera"
+          --health-interval=5s --health-timeout=3s --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_DB: chimera_test
+      POSTGRES_USER: chimera
+      POSTGRES_PASSWORD: chimera
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-secret-please-change
+      LLM_MODE: synthetic
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: install
+        working-directory: backend
+        run: |
+          pip install -U pip
+          pip install -r requirements.txt
+      - name: lint
+        working-directory: backend
+        run: |
+          python -m ruff check app || true
+      - name: migrate
+        working-directory: backend
+        run: alembic upgrade head
+      - name: test
+        working-directory: backend
+        run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: |
+          npm ci || npm install
+          npm run lint --if-present
+          npm run build

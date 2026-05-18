@@ -1,0 +1,28 @@
+# Minimal Helm scaffold. Production deployments should template Deployments,
+# Services, Ingress, PVCs, and ExternalSecret refs for JWT + LLM keys.
+image:
+  backend: ghcr.io/adversaria-labs/chimera-backend:0.1.0
+  frontend: ghcr.io/adversaria-labs/chimera-frontend:0.1.0
+
+replicas:
+  api: 2
+  worker: 4
+  frontend: 2
+
+postgres:
+  external: true
+  url: ${POSTGRES_URL}
+
+redis:
+  external: true
+  url: ${REDIS_URL}
+
+llm:
+  mode: gemini
+  provider: gemini
+  geminiApiKeySecretRef: chimera-gemini
+
+ingress:
+  enabled: true
+  host: chimera.example.com
+  tls: true

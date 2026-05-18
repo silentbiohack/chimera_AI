@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: radial-gradient(ellipse at top, #0b1326 0%, #04060b 70%);
+  color: #d8e1f3;
+  min-height: 100vh;
+  font-family: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.005em;
+}
+
+@layer components {
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(75, 233, 210, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(75, 233, 210, 0.05) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .panel {
+    @apply rounded-xl border border-cy-800/50 bg-bg-900/60 backdrop-blur-md;
+  }
+  .panel-glow {
+    @apply panel shadow-glow;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-cy-700/50
+           bg-cy-900/40 px-2 py-0.5 text-[11px] font-mono uppercase tracking-wider
+           text-cy-200;
+  }
+  .chip-danger {
+    @apply inline-flex items-center gap-1 rounded-full border border-danger-500/40
+           bg-danger-500/10 px-2 py-0.5 text-[11px] font-mono uppercase tracking-wider
+           text-danger-500;
+  }
+  .chip-warn {
+    @apply inline-flex items-center gap-1 rounded-full border border-warn-500/40
+           bg-warn-500/10 px-2 py-0.5 text-[11px] font-mono uppercase tracking-wider
+           text-warn-500;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-md border border-cy-700/60
+           bg-cy-900/40 px-3 py-1.5 text-sm font-mono uppercase tracking-wider
+           text-cy-100 transition hover:bg-cy-800/60 hover:shadow-glow;
+  }
+  .btn-primary {
+    @apply btn bg-cy-500/20 border-cy-400/60 text-cy-50;
+  }
+  .stat {
+    @apply panel p-4 flex flex-col gap-1;
+  }
+  .stat-num {
+    @apply text-3xl font-display font-semibold text-cy-100;
+  }
+  .stat-label {
+    @apply text-[11px] uppercase tracking-widest text-ink-300 font-mono;
+  }
+}
+
+.scanline {
+  position: relative;
+  overflow: hidden;
+}
+.scanline::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, transparent, rgba(75, 233, 210, 0.07), transparent);
+  height: 30%;
+  animation: scan 6s linear infinite;
+  pointer-events: none;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(75, 233, 210, 0.18); border-radius: 4px;
+}
+::-webkit-scrollbar-track { background: transparent; }

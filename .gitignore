@@ -1,0 +1,32 @@
+# env
+.env
+.env.local
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# node
+node_modules/
+.next/
+out/
+.turbo/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# data
+*.sqlite
+*.db
+chimera_pg/
+
+# ad-hoc test artifacts
+scripts/_*.html
+/pricing.html
+/_*.html

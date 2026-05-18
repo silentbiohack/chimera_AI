@@ -1,0 +1,113 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chimera}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chimera}
+      POSTGRES_DB: ${POSTGRES_DB:-chimera}
+    ports:
+      - "5435:5432"
+    volumes:
+      - chimera_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chimera}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Bound resource use so a runaway query or backup job can't OOM the
+    # host. Adjust for prod nodes; these are dev-sane defaults.
+    mem_limit: 1g
+    cpus: 1.0
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+    cpus: 0.5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./backend:/app
+    command: >
+      bash -lc "
+        alembic upgrade head &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    healthcheck:
+      # /healthz responds 200 only after FastAPI has finished startup, which
+      # happens after `alembic upgrade head` exits (the && chain above).
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=2).status==200 else 1)\""]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+      start_period: 20s
+    mem_limit: 2g
+    cpus: 2.0
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on:
+      backend:
+        # Wait for migrations + boot; otherwise the worker may write to
+        # tables that don't exist yet.
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["python", "-m", "app.workers.runner"]
+    volumes:
+      - ./backend:/app
+    # The worker inherits backend's image (and HEALTHCHECK that curls
+    # /healthz), but it doesn't run a webserver — so the inherited probe
+    # always fails. Disable it; the worker's liveness is observable via
+    # Redis queue depth instead.
+    healthcheck:
+      disable: true
+    # Re-spawn on OOM kill so a single job that exhausts memory doesn't
+    # leave the queue stuck with no consumer.
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: ["npm", "run", "dev"]
+    mem_limit: 1g
+    cpus: 1.0
+
+volumes:
+  chimera_pg:
