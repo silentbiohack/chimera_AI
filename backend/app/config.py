@@ -82,6 +82,18 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "JWT_SECRET must be set to ≥32 bytes in production"
                 )
+            # In production we must NOT silently fall back to the docker-
+            # compose hostname "postgres" — on Railway / Heroku / Render
+            # that resolves to nothing and alembic crashes with a 30-line
+            # SQLAlchemy traceback that buries the actual misconfig.
+            # Fail fast with a one-line diagnosis instead.
+            if not self.database_url_override and self.postgres_host == "postgres":
+                raise ValueError(
+                    "DATABASE_URL is not set and POSTGRES_HOST is the compose "
+                    "default 'postgres'. On Railway: open the backend service "
+                    "→ Variables → add `DATABASE_URL=${{Postgres.DATABASE_URL}}` "
+                    "(reference your Postgres add-on). See docs/DEPLOY_RAILWAY.md."
+                )
         return self
 
 
